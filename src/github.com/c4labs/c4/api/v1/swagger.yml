@@ -1,0 +1,140 @@
+# The C4 API
+swagger: '2.0'
+info:
+  title: C4 API
+  description: API for interacting with c4d
+  version: "1.0.0"
+# the domain of the service
+host: c4.Avalanche.com
+# array of all schemes that your API supports
+schemes:
+  - https
+# will be prefixed to all paths
+basePath: /v1
+consumes:
+  - application/json
+produces:
+  - application/json
+paths:
+  /assets:
+    get:
+      description: |
+        Returns all asset records that the user has access to.
+      operationId: "findAssets"
+      parameters:
+        -
+          name: "tags"
+          in: "query"
+          description: "tags to filter by"
+          required: false
+          type: "array"
+          collectionFormat: "csv"
+          items:
+            type: "string"
+        -
+          name: "limit"
+          in: "query"
+          description: "maximum number of results to return"
+          required: false
+          type: "integer"
+          format: "int32"
+      responses:
+        200:
+          description: "asset response"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/Asset"
+        default:
+          description: "unexpected error"
+          schema:
+            $ref: "#/definitions/Error"
+    post:
+      description: "Creates a new asset record."
+      operationId: "addAsset"
+      parameters:
+        -
+          name: "asset"
+          in: "body"
+          description: "Asset to add"
+          required: true
+          schema:
+            $ref: "#/definitions/NewAsset"
+      responses:
+        200:
+          description: "asset response"
+          schema:
+            $ref: "#/definitions/Asset"
+        default:
+          description: "unexpected error"
+          schema:
+            $ref: "#/definitions/Error"
+  /assets/{id}:
+    get:
+      description: "Returns an asset record based on a c4id."
+      operationId: "find asset by c4id"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          description: "ID of asset record to fetch"
+          required: true
+          type: "string"
+      responses:
+        200:
+          description: "asset response"
+          schema:
+            $ref: "#/definitions/Asset"
+        default:
+          description: "unexpected error"
+          schema:
+            $ref: "#/definitions/Error"
+    delete:
+        description: "deletes a single asset record on the c4id supplied"
+        operationId: "deleteAsset"
+        parameters:
+          -
+            name: "id"
+            in: "path"
+            description: "ID of asset to delete"
+            required: true
+            type: "string"
+        responses:
+          204:
+            description: "asset deleted"
+          default:
+            description: "unexpected error"
+            schema:
+              $ref: "#/definitions/Error"
+definitions:
+    Asset:
+      type: "object"
+      allOf:
+        -
+          $ref: "#/definitions/NewAsset"
+        -
+          required:
+            - "id"
+          properties:
+            id:
+              type: "string"
+    NewAsset:
+      type: "object"
+      required:
+        - "key"
+      properties:
+        key:
+          type: "string"
+        tag:
+          type: "string"
+    Error:
+      type: "object"
+      required:
+        - "code"
+        - "message"
+      properties:
+        code:
+          type: "integer"
+          format: "int32"
+        message:
+          type: "string"
