@@ -1,38 +1,40 @@
 package main
 
 import (
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"runtime"
-	"github.com/boltdb/bolt"
-	"github.com/c4labs/c4/asset"
-	flag "github.com/ogier/pflag"
-	"golang.org/x/crypto/ssh/terminal"
-	"strings"
+  "bufio"
+  "fmt"
+  "time"
+  "github.com/boltdb/bolt"
+  "github.com/c4labs/c4/asset"
+  flag "github.com/ogier/pflag"
+  "golang.org/x/crypto/ssh/terminal"
+  "io"
+  "io/ioutil"
+  "os"
+  "path/filepath"
+  "runtime"
+  "strings"
 )
-
-/*
-	1) This file creates a db (using boltDB)
-	2) Generates c4id for specified file-path-url
-	3) Inserts the [c4id:file-path-url] pair to db
-	4) Again generates c4id for the above c4id & inserts this [key:value] pair to db
-	5) Reads all key:value pairs from DB & prints at console
-*/
 
 const version_number = "1.0"
 
+func versionString() string {
+  return `c4 version ` + version_number + ` (` + runtime.GOOS + `)`
+}
+
 var (
-	recursive_flag 		bool
-	version_flag      	bool
-	links_flag 			bool
-	formatting_string 	string
-	depth 				int
-	include_meta 		bool
-	absolute_flag 		bool
-	myBucket          	= []byte("c4bolt_test")
-	dbLocation        	string
+	recursive_flag bool
+	version_flag bool
+	arg_links bool
+	links_flag bool
+	no_links bool
+	summary bool
+	depth int
+	include_meta bool
+	absolute_flag bool
+	formatting_string string
+	myBucket = []byte("c4bolt_test")
+	dbLocation string
 )
 
 func init() {
@@ -48,124 +50,121 @@ func init() {
 	flag.BoolVarP(&links_flag, "links", "L", false, "All symbolic links are followed.")
 	flag.IntVarP(&depth, "depth", "d", 0, "Only output ids for files and folders 'depth' directories deep.")
 	flag.BoolVarP(&include_meta, "metadata", "m", false, "Include filesystem metadata.\n          \"url\" is always included unless data is piped, or only a single file is specified.")
-	flag.StringVar(&dbLocation, "db", "mybolt1.db", "Location of your boltdb file")
+	flag.StringVar(&dbLocation, "db", "d:\\mybolt1.db", "Location of your boltdb file")
 	flag.StringVarP(&formatting_string, "formatting", "f", "id", "Output formatting options.\n          \"id\": c4id oriented.\n          \"path\": path oriented.")
-}
-
-func versionString() string {
-	return `c4 version ` + version_number + ` (` + runtime.GOOS + `)`
 }
 
 func handleErr(err error) {
 	if err != nil {
 		fmt.Printf("Unable to proceed [%s]", err)
 	}
-	os.Exit(1)
 }
 
 func encode(src io.Reader) *asset.ID {
-	e := asset.NewIDEncoder()
-	_, err := io.Copy(e, src)
-	handleErr(err)
-	return e.ID()
+  e := asset.NewIDEncoder()
+  _, err := io.Copy(e, src)
+  if err != nil {
+    panic(err)
+  }
+  return e.ID()
+}
+
+func encodestr(src string) *asset.ID {
+  e := asset.NewIDEncoder()
+  io.Copy(e, strings.NewReader(src))
+  return e.ID()
 }
 
 func fileID(path string) (id *asset.ID) {
-	f, err := os.Open(path)
-	handleErr(err)
-	encode(f)
-	f.Close()
-	return
+  f, err := os.Open(path)
+  if err != nil {
+    fmt.Fprintf(os.Stderr, "Unable to identify %s. %v\n", path, err)
+    os.Exit(1)
+  }
+  id = encode(f)
+  f.Close()
+  return
 }
 
 func nullId() *asset.ID {
-	e := asset.NewIDEncoder()
-	io.Copy(e, strings.NewReader(``))
-	return e.ID()
+  e := asset.NewIDEncoder()
+  io.Copy(e, strings.NewReader(``))
+  return e.ID()
 }
-func printID(id *asset.ID) {
-	if terminal.IsTerminal(int(os.Stdout.Fd())) {
-		fmt.Printf("Id: %s \n\t%s \n", id.String())
-	} else {
-		fmt.Printf("Id: %s \n\t%s \n", id.String())
-	}
+
+func printID(path string, id *asset.ID) {
+  if terminal.IsTerminal(int(os.Stdout.Fd())) {
+    fmt.Printf("\n%s : %s", id.String(), path)
+  } else {
+    fmt.Printf("\n%s : %s", id.String(), path)
+  }
+}
+
+func output(path string, item map[string]interface{}) {
+  rootPath, _ := filepath.Abs(".")
+  baseName := filepath.Base(path)
+
+  newPath := path
+  if !absolute_flag {
+    newPath, _ = filepath.Rel(rootPath, path)
+  }
+  if include_meta {
+    if formatting_string == "path" {
+      fmt.Printf("\"%s\":\n", newPath)
+      fmt.Printf("  c4id: %s\n", item["c4id"])
+    } else {
+      fmt.Printf("%s:\n", item["c4id"])
+      fmt.Printf("  path: \"%s\"\n", newPath)
+    }
+    fmt.Printf("  name:  \"%s\"\n", baseName)
+    if item["folder"] == false {
+      fmt.Printf("  folder:  false\n")
+    } else {
+      fmt.Printf("  folder:  true\n")
+    }
+    if item["link"] == false {
+      fmt.Printf("  link:  false\n")
+    } else {
+      linkPath := item["link"].(string)
+      if !absolute_flag {
+        linkPath, _ = filepath.Rel(rootPath, linkPath)
+      }
+      fmt.Printf("  link:  \"%s\"\n", linkPath)
+    }
+    fmt.Printf("  bytes:  %d\n", item["bytes"])
+  } else {
+    if formatting_string == "path" {
+      fmt.Printf("%s:  %s\n", newPath, item["c4id"])
+    } else {
+      fmt.Printf("%s:  %s\n", item["c4id"], newPath)
+    }
+  }
 }
 
 func newItem(path string) (item map[string]interface{}) {
-	item = make(map[string]interface{})
-	if item == nil {
-		fmt.Fprintf(os.Stderr, "Unable to allocate space for file information for \"%s\".", path)
-		os.Exit(1)
-	}
-	f, err := os.Lstat(path)
-	handleErr(err)
+  item = make(map[string]interface{})
+  if item == nil {
+    fmt.Fprintf(os.Stderr, "Unable to allocate space for file information for \"%s\".", path)
+    os.Exit(1)
+  }
+  f, err := os.Lstat(path)
+  if err != nil {
+    fmt.Fprintf(os.Stderr, "Unable to get status for \"%s\": %s\n", path, err)
+    os.Exit(1)
+  }
 
-	item["folder"] = f.IsDir()
-	item["link"] = f.Mode()&os.ModeSymlink == os.ModeSymlink
+  item["folder"] = f.IsDir()
+  item["link"] = f.Mode()&os.ModeSymlink == os.ModeSymlink
+  item["socket"] = f.Mode()&os.ModeSocket == os.ModeSocket
+  item["bytes"] = f.Size()
+  item["modified"] = f.ModTime().UTC()
+  item["currentTime"] = time.Now().UTC()
 
-	return item
-}
-
-func generate_c4id(fileurl string, depth int, relative_path string) (id *asset.ID) {
-	path, err := filepath.Abs(fileurl)
-	handleErr(err)
-
-	item := newItem(path)
-	if item["link"] == true && !links_flag {
-		newFileUrl, _ := filepath.EvalSymlinks(fileurl)
-		item["link"] = newFileUrl
-		id = nullId()
-	} else {
-			if item["link"] == true {
-				newFileUrl, err := filepath.EvalSymlinks(fileurl)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Unable to follow link %s. %s\n", newFileUrl, err)
-				item["link"] = newFileUrl
-				id = nullId()
-			} else {
-				item["link"] = newFileUrl
-				var linkId asset.IDSlice
-				linkId.Push(generate_c4id(newFileUrl, depth-1, relative_path))
-				id = linkId.ID()
-			}		
-		} 
-	}
-
-	item["c4id"] = id.String()
-	if depth >=0 || recursive_flag {
-		//output(path, item)
-		fmt.Printf("Entered output section.........")
-	}
-	return
-}
-
-func generate_c4id_c4id(cid string) (id *asset.ID){
-	path, err := filepath.Abs(cid)
-	handleErr(err)
-
-	item := newItem(path)
-	if item["link"] == true {
-		newFileUrl, err := filepath.EvalSymlinks(cid)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Unable to follow link %s. %s\n", newFileUrl, err)
-			item["link"] = newFileUrl
-			id = nullId()
-		} else {
-			item["link"] = newFileUrl
-			var linkId asset.IDSlice
-			linkId.Push(generate_c4id_c4id(newFileUrl))
-			id = linkId.ID()
-		}
-	} else {
-		id = fileID(path)
-	}
-
-	item["c4id"] = id.String()
-	return
+  return item
 }
 
 func insert(id string, path string) {
-	db, err := bolt.Open(dbLocation, 0644, nil)
+	db, err := bolt.Open(dbLocation, 0600, nil)
 	handleErr(err)
 	defer db.Close()
 
@@ -178,7 +177,8 @@ func insert(id string, path string) {
 		handleErr(err)
 		return err
 	})
-	fmt.Printf("\nInserted [%s]:[%s] ", id, path)
+	handleErr(err)
+	fmt.Printf("\nInserting to Db - [%s]:[%s] ", id, path)
 	return
 }
 
@@ -199,48 +199,116 @@ func read() {
 	return
 }
 
+func walkFilesystem(depth int, fileurl string, relative_path string) (id *asset.ID) {
+  path, err := filepath.Abs(fileurl)
+  if err != nil {
+    fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", fileurl, err)
+    os.Exit(1)
+  }
+
+  item := newItem(path)
+  if item["socket"] == true {
+    id = nullId()
+  } else if item["link"] == true && !links_flag {
+    newFilepath, _ := filepath.EvalSymlinks(fileurl)
+    item["link"] = newFilepath
+    id = nullId()
+  } else if item["link"] == true {
+    newFilepath, err := filepath.EvalSymlinks(fileurl)
+    if err != nil {
+      fmt.Fprintf(os.Stderr, "Unable to follow link %s. %s\n", newFilepath, err)
+      item["link"] = newFilepath
+      id = nullId()
+    } else {
+      item["link"] = newFilepath
+      var linkId asset.IDSlice
+      linkId.Push(walkFilesystem(depth-1, newFilepath, relative_path))
+      id = linkId.ID()
+    }
+  } else {
+    if item["folder"] == true {
+      files, err := ioutil.ReadDir(path)
+      if err != nil {
+        fmt.Fprintf(os.Stderr, "Unable to ReadDir: %v\n", err)
+        os.Exit(1)
+      }
+      var childIDs asset.IDSlice
+      for _, file := range files {
+        path := fileurl + string(filepath.Separator) + file.Name()
+        childIDs.Push(walkFilesystem(depth-1, path, relative_path))
+      }
+      id = childIDs.ID()
+    } else {
+      id = fileID(path)
+    }
+  }
+  item["c4id"] = id.String()
+  if depth >= 0 || recursive_flag {
+    output(path, item)
+  }
+  return
+}
+
 func main() {
-	flag.Parse()
-	fileurl := flag.Args()
-    if version_flag {
-		fmt.Println(versionString())
-		os.Exit(0)
-	}
+  flag.Parse()
+  file_list := flag.Args()
+  if version_flag {
+    fmt.Println(versionString())
+    os.Exit(0)
+  }
 
-    if len(fileurl) == 0 {
-		flag.Usage()
-	} else if len(fileurl) == 1 && !(recursive_flag || include_meta) && depth == 0 {
-		path, err := filepath.Abs(fileurl[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", fileurl[0], err)
-			os.Exit(1)
-		}
-		id := generate_c4id(path, -1, "")
-		printID(id)
-	} else {
-		for _, file := range fileurl {
-			path, err := filepath.Abs(file)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", file, err)
-				os.Exit(1)
-			}
-			if depth < 0 {
-				depth = 0
-			}
-
-			// Generate c4id & insert to db
-			id := generate_c4id(path, depth, "")
-			printID(id)
-			insert(id.String(), path)
-
-			// Generate c4id for above c4id & insert to db
-			id1 := generate_c4id_c4id(id.String())
-			printID(id1)
-			insert(id1.String(), id.String())
+  if len(file_list) == 0 {
+    stat, _ := os.Stdin.Stat()
+    if (stat.Mode() & os.ModeCharDevice) == 0 {
+      reader := bufio.NewReader(os.Stdin)
+      printID("",encode(reader))
+    } else {
+      flag.Usage()
+    }
+  } else if len(file_list) == 1 && !(recursive_flag || include_meta) && depth == 0 {
+    path, err := filepath.Abs(file_list[0])
+    if err != nil {
+      fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", file_list[0], err)
+      os.Exit(1)
+    }
+    id := walkFilesystem(-1, path, "")
+    printID(path, id)
+    fmt.Printf("\nCreating boltdb [%s]", dbLocation)
+    insert(id.String(), path)
 	
-			// Read all key:value pairs frm db
-			read()		
-		}		
-	}
-	os.Exit(0)
+	// Generate c4id for above c4id
+	fmt.Printf("\nGenerating C4Id for above C4Id")
+	id1 := encodestr(id.String())
+	printID(id.String(), id1)
+	
+	insert(id1.String(), id.String())
+
+    // Read all key:value pairs frm db
+	read()
+  } else {
+    for _, file := range file_list {
+      path, err := filepath.Abs(file)
+      if err != nil {
+        fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", file, err)
+        os.Exit(1)
+      }
+      if depth < 0 {
+        depth = 0
+      }
+      id := walkFilesystem(depth, path, "")
+      printID(path, id)
+	  fmt.Printf("\n\nCreating boltdb [%s]", dbLocation)
+	  insert(id.String(), path)
+
+	  // Generate c4id for above c4id
+	  fmt.Printf("\n\nGenerating C4Id for above C4Id")
+	  id1 := encodestr(id.String())
+	  printID(id.String(), id1)
+ 	
+	  insert(id1.String(), id.String())
+    }
+    // Read all key:value pairs frm boltDb
+	read()    
+  }
+  os.Exit(0)
 }
