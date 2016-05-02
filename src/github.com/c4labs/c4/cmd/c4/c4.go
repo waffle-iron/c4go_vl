@@ -3,6 +3,7 @@ package main
 import (
   "bufio"
   "fmt"
+  "time"
   "github.com/c4labs/c4/asset"
   flag "github.com/ogier/pflag"
   "golang.org/x/crypto/ssh/terminal"
@@ -14,7 +15,7 @@ import (
   "strings"
 )
 
-const version_number = "0.5"
+const version_number = "1.0"
 
 func versionString() string {
   return `c4 version ` + version_number + ` (` + runtime.GOOS + `)`
@@ -25,7 +26,7 @@ var version_flag bool
 var arg_links bool
 var links_flag bool
 var no_links bool
-var summery bool
+var summary bool
 var depth int
 var include_meta bool
 var absolute_flag bool
@@ -144,7 +145,7 @@ func newItem(path string) (item map[string]interface{}) {
   item["socket"] = f.Mode()&os.ModeSocket == os.ModeSocket
   item["bytes"] = f.Size()
   item["modified"] = f.ModTime().UTC()
-  item["currentTime"] = time.Time.Now().UTC()
+  item["currentTime"] = time.Now().UTC()
 
   return item
 }

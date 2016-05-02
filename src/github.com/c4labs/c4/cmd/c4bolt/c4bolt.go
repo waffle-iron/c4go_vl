@@ -10,6 +10,7 @@ import (
   "golang.org/x/crypto/ssh/terminal"
   "io"
   "io/ioutil"
+  "net/url"
   "os"
   "path/filepath"
   "runtime"
@@ -50,7 +51,7 @@ func init() {
 	flag.BoolVarP(&links_flag, "links", "L", false, "All symbolic links are followed.")
 	flag.IntVarP(&depth, "depth", "d", 0, "Only output ids for files and folders 'depth' directories deep.")
 	flag.BoolVarP(&include_meta, "metadata", "m", false, "Include filesystem metadata.\n          \"url\" is always included unless data is piped, or only a single file is specified.")
-	flag.StringVar(&dbLocation, "db", "d:\\mybolt1.db", "Location of your boltdb file")
+	flag.StringVar(&dbLocation, "db", "mybolt.db", "Location of your boltdb file")
 	flag.StringVarP(&formatting_string, "formatting", "f", "id", "Output formatting options.\n          \"id\": c4id oriented.\n          \"path\": path oriented.")
 }
 
@@ -61,18 +62,18 @@ func handleErr(err error) {
 }
 
 func encode(src io.Reader) *asset.ID {
-  e := asset.NewIDEncoder()
-  _, err := io.Copy(e, src)
-  if err != nil {
-    panic(err)
-  }
-  return e.ID()
+	e := asset.NewIDEncoder()
+	_, err := io.Copy(e, src)
+	if err != nil {
+		panic(err)
+	}
+	return e.ID()
 }
 
 func encodestr(src string) *asset.ID {
-  e := asset.NewIDEncoder()
-  io.Copy(e, strings.NewReader(src))
-  return e.ID()
+  	e := asset.NewIDEncoder()
+  	io.Copy(e, strings.NewReader(src))
+  	return e.ID()
 }
 
 func fileID(path string) (id *asset.ID) {
@@ -141,26 +142,43 @@ func output(path string, item map[string]interface{}) {
   }
 }
 
+func isValidUrl(urlStr string)(flag bool){
+	_, err := url.Parse(urlStr)
+	var validUrl bool
+	if err != nil {
+	    fmt.Fprintf(os.Stderr, "Unable to get status for \"%s\": %s\n", urlStr, err)
+        validUrl = false
+    } else {
+		validUrl = true
+    }
+    return validUrl
+}
+
 func newItem(path string) (item map[string]interface{}) {
-  item = make(map[string]interface{})
-  if item == nil {
-    fmt.Fprintf(os.Stderr, "Unable to allocate space for file information for \"%s\".", path)
-    os.Exit(1)
-  }
-  f, err := os.Lstat(path)
-  if err != nil {
-    fmt.Fprintf(os.Stderr, "Unable to get status for \"%s\": %s\n", path, err)
-    os.Exit(1)
-  }
+	item = make(map[string]interface{})
+	if item == nil {
+		fmt.Fprintf(os.Stderr, "Unable to allocate space for file information for \"%s\".", path)
+	    os.Exit(1)
+	}
+	f, err := os.Lstat(path)
+	if err != nil {
+		if !isValidUrl(path) {
+    		fmt.Fprintf(os.Stderr, "Unable to get status for \"%s\": %s\n", path, err)
+    		os.Exit(1)
+    	} else {
+			fmt.Printf("\nReturning = %s \n", path)
+			return
+    	}
+	}
+  
+  	item["folder"] = f.IsDir()
+  	item["link"] = f.Mode()&os.ModeSymlink == os.ModeSymlink
+  	item["socket"] = f.Mode()&os.ModeSocket == os.ModeSocket
+  	item["bytes"] = f.Size()
+  	item["modified"] = f.ModTime().UTC()
+  	item["currentTime"] = time.Now().UTC()
 
-  item["folder"] = f.IsDir()
-  item["link"] = f.Mode()&os.ModeSymlink == os.ModeSymlink
-  item["socket"] = f.Mode()&os.ModeSocket == os.ModeSocket
-  item["bytes"] = f.Size()
-  item["modified"] = f.ModTime().UTC()
-  item["currentTime"] = time.Now().UTC()
-
-  return item
+  	return item
 }
 
 func insert(id string, path string) {
@@ -178,7 +196,7 @@ func insert(id string, path string) {
 		return err
 	})
 	handleErr(err)
-	fmt.Printf("\nInserting to Db - [%s]:[%s] ", id, path)
+	fmt.Printf("\nInserting to Db := [%s]:[%s] ", id, path)
 	return
 }
 
@@ -200,53 +218,56 @@ func read() {
 }
 
 func walkFilesystem(depth int, fileurl string, relative_path string) (id *asset.ID) {
-  path, err := filepath.Abs(fileurl)
-  if err != nil {
-    fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", fileurl, err)
-    os.Exit(1)
-  }
+  	path, err := filepath.Abs(fileurl)
+  	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", fileurl, err)
+    	os.Exit(1)
+  	}
 
-  item := newItem(path)
-  if item["socket"] == true {
-    id = nullId()
-  } else if item["link"] == true && !links_flag {
-    newFilepath, _ := filepath.EvalSymlinks(fileurl)
-    item["link"] = newFilepath
-    id = nullId()
-  } else if item["link"] == true {
-    newFilepath, err := filepath.EvalSymlinks(fileurl)
-    if err != nil {
-      fmt.Fprintf(os.Stderr, "Unable to follow link %s. %s\n", newFilepath, err)
-      item["link"] = newFilepath
-      id = nullId()
-    } else {
-      item["link"] = newFilepath
-      var linkId asset.IDSlice
-      linkId.Push(walkFilesystem(depth-1, newFilepath, relative_path))
-      id = linkId.ID()
-    }
-  } else {
-    if item["folder"] == true {
-      files, err := ioutil.ReadDir(path)
-      if err != nil {
-        fmt.Fprintf(os.Stderr, "Unable to ReadDir: %v\n", err)
-        os.Exit(1)
-      }
-      var childIDs asset.IDSlice
-      for _, file := range files {
-        path := fileurl + string(filepath.Separator) + file.Name()
-        childIDs.Push(walkFilesystem(depth-1, path, relative_path))
-      }
-      id = childIDs.ID()
-    } else {
-      id = fileID(path)
-    }
-  }
-  item["c4id"] = id.String()
-  if depth >= 0 || recursive_flag {
-    output(path, item)
-  }
-  return
+  	item := newItem(path)
+  	if item["socket"] == true {
+    	id = nullId()
+  	} else if item["link"] == true && !links_flag {
+    	newFilepath, _ := filepath.EvalSymlinks(fileurl)
+    	item["link"] = newFilepath
+    	id = nullId()
+  	} else if item["link"] == true {
+    	newFilepath, err := filepath.EvalSymlinks(fileurl)
+    	if err != nil {
+      		fmt.Fprintf(os.Stderr, "Unable to follow link %s. %s\n", newFilepath, err)
+      		item["link"] = newFilepath
+      		id = nullId()
+    	} else {
+      		item["link"] = newFilepath
+      		var linkId asset.IDSlice
+      		linkId.Push(walkFilesystem(depth-1, newFilepath, relative_path))
+      		id = linkId.ID()
+    	}
+  	} else if isValidUrl(path) {
+  		id = encodestr(path)
+  	} else {
+    	if item["folder"] == true {
+      		files, err := ioutil.ReadDir(path)
+      		if err != nil {
+        		fmt.Fprintf(os.Stderr, "Unable to ReadDir: %v\n", err)
+        		os.Exit(1)
+      		}
+      		var childIDs asset.IDSlice
+      		for _, file := range files {
+        		path := fileurl + string(filepath.Separator) + file.Name()
+        		childIDs.Push(walkFilesystem(depth-1, path, relative_path))
+      		}
+      	id = childIDs.ID()
+    	} else {
+      		id = fileID(path)
+    	}
+  	}
+  	item["c4id"] = id.String()
+  	/*
+  	if depth >= 0 || recursive_flag {
+    	output(path, item)
+  	}*/
+  	return
 }
 
 func main() {
@@ -256,6 +277,7 @@ func main() {
     fmt.Println(versionString())
     os.Exit(0)
   }
+  fmt.Printf("Environment = %s/%s \n", os.Getenv("GOOS"), os.Getenv("GOARCH"))
 
   if len(file_list) == 0 {
     stat, _ := os.Stdin.Stat()
@@ -266,26 +288,40 @@ func main() {
       flag.Usage()
     }
   } else if len(file_list) == 1 && !(recursive_flag || include_meta) && depth == 0 {
-    path, err := filepath.Abs(file_list[0])
-    if err != nil {
-      fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", file_list[0], err)
-      os.Exit(1)
-    }
-    id := walkFilesystem(-1, path, "")
-    printID(path, id)
-    fmt.Printf("\nCreating boltdb [%s]", dbLocation)
-    insert(id.String(), path)
-	
-	// Generate c4id for above c4id
-	fmt.Printf("\nGenerating C4Id for above C4Id")
-	id1 := encodestr(id.String())
-	printID(id.String(), id1)
-	
-	insert(id1.String(), id.String())
+  	if isValidUrl(file_list[0]) {
+	    fmt.Printf("Url = %s", file_list[0])  	
+	    id := encodestr(file_list[0])
 
+	    fmt.Printf("\nOpening boltdb = %s\\%s", os.Getenv("GOPATH"), dbLocation)
+    	insert(id.String(), file_list[0])
+
+		// Generate c4id for above c4id
+		fmt.Printf("\n\nGenerating C4Id for above C4Id,")
+		id1 := encodestr(id.String())
+		printID(id.String(), id1)
+	
+		insert(id1.String(), id.String())
+  	} else {
+	    path, err := filepath.Abs(file_list[0])
+	    if err != nil {
+	      fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", file_list[0], err)
+	      os.Exit(1)
+	    }
+	    id := walkFilesystem(-1, path, "")
+	    fmt.Printf("\nOpening boltdb = %s\\%s", os.Getenv("GOPATH"), dbLocation)
+    	insert(id.String(), path)
+
+		// Generate c4id for above c4id
+		fmt.Printf("\n\nGenerating C4Id for above C4Id,")
+		id1 := encodestr(id.String())
+		printID(id.String(), id1)
+		
+		insert(id1.String(), id.String())
+	}
     // Read all key:value pairs frm db
 	read()
   } else {
+  	fmt.Printf("\n\nOpening boltdb = %s\\%s \n", os.Getenv("GOPATH"), dbLocation)
     for _, file := range file_list {
       path, err := filepath.Abs(file)
       if err != nil {
@@ -295,20 +331,18 @@ func main() {
       if depth < 0 {
         depth = 0
       }
-      id := walkFilesystem(depth, path, "")
-      printID(path, id)
-	  fmt.Printf("\n\nCreating boltdb [%s]", dbLocation)
+      id := walkFilesystem(depth, path, "")	  
 	  insert(id.String(), path)
 
 	  // Generate c4id for above c4id
-	  fmt.Printf("\n\nGenerating C4Id for above C4Id")
+	  fmt.Printf("\nGenerating C4Id for above C4Id,")
 	  id1 := encodestr(id.String())
 	  printID(id.String(), id1)
  	
 	  insert(id1.String(), id.String())
     }
     // Read all key:value pairs frm boltDb
-	read()    
+	read()
   }
   os.Exit(0)
 }

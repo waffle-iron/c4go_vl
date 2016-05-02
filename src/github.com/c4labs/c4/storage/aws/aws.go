@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/c4labs/c4"
+	"github.com/c4labs/c4/asset"
 )
 
 // var wg sync.WaitGroup
@@ -220,8 +220,8 @@ func (r *AWSResource) Pull(fn fileInfoFunc) {
 	}
 }
 
-func encode(src io.Reader) *c4.ID {
-	e := c4.NewIDEncoder()
+func encode(src io.Reader) *asset.ID {
+	e := asset.NewIDEncoder()
 	_, err := io.Copy(e, src)
 	if err != nil {
 		panic(err)

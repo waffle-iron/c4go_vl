@@ -22,8 +22,7 @@ import (
 // DataDB -- Data
 
 
-
-type ByteSize int64const (
+type ByteSize int64 const (
   _ = iota  // ignore first value by assigning to blank identifier
   KB ByteSize = 1<<(10*iota)
   MB
@@ -118,8 +117,8 @@ func main() {
     	StorageClass *string `type:"string" enum:"ObjectStorageClass"`
 
 		CommonPrefixes []*CommonPrefix `type:"list" flattened:"true"`
-    Delimiter *string `type:"string"`
-    EncodingType *string `type:"string" enum:"EncodingType"`
+    Delimiter *string = `type:"string"`
+    EncodingType *string = `type:"string" enum:"EncodingType"`
     IsTruncated *bool `type:"boolean"`
     Marker *string `type:"string"`
     MaxKeys *int64 `type:"integer"`
