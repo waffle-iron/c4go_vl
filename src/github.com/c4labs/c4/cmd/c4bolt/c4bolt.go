@@ -8,9 +8,9 @@ import (
   "github.com/c4labs/c4/asset"
   flag "github.com/ogier/pflag"
   "golang.org/x/crypto/ssh/terminal"
+  "github.com/asaskevich/govalidator"
   "io"
   "io/ioutil"
-  "net/url"
   "os"
   "path/filepath"
   "runtime"
@@ -142,18 +142,6 @@ func output(path string, item map[string]interface{}) {
   }
 }
 
-func isValidUrl(urlStr string)(flag bool){
-	_, err := url.Parse(urlStr)
-	var validUrl bool
-	if err != nil {
-	    fmt.Fprintf(os.Stderr, "Unable to get status for \"%s\": %s\n", urlStr, err)
-        validUrl = false
-    } else {
-		validUrl = true
-    }
-    return validUrl
-}
-
 func newItem(path string) (item map[string]interface{}) {
 	item = make(map[string]interface{})
 	if item == nil {
@@ -162,7 +150,7 @@ func newItem(path string) (item map[string]interface{}) {
 	}
 	f, err := os.Lstat(path)
 	if err != nil {
-		if !isValidUrl(path) {
+		if !(govalidator.IsURL(path)) {
     		fmt.Fprintf(os.Stderr, "Unable to get status for \"%s\": %s\n", path, err)
     		os.Exit(1)
     	} else {
@@ -196,7 +184,7 @@ func insert(id string, path string) {
 		return err
 	})
 	handleErr(err)
-	fmt.Printf("\nInserting to Db := [%s]:[%s] ", id, path)
+	fmt.Printf("\nInserting to Db (key:value) := [%s]:[%s] ", id, path)
 	return
 }
 
@@ -243,7 +231,7 @@ func walkFilesystem(depth int, fileurl string, relative_path string) (id *asset.
       		linkId.Push(walkFilesystem(depth-1, newFilepath, relative_path))
       		id = linkId.ID()
     	}
-  	} else if isValidUrl(path) {
+  	} else if (govalidator.IsURL(path)) {
   		id = encodestr(path)
   	} else {
     	if item["folder"] == true {
@@ -270,7 +258,7 @@ func walkFilesystem(depth int, fileurl string, relative_path string) (id *asset.
   	return
 }
 
-func main() {
+func c4bolt_function() {
   flag.Parse()
   file_list := flag.Args()
   if version_flag {
@@ -288,8 +276,8 @@ func main() {
       flag.Usage()
     }
   } else if len(file_list) == 1 && !(recursive_flag || include_meta) && depth == 0 {
-  	if isValidUrl(file_list[0]) {
-	    fmt.Printf("Url = %s", file_list[0])  	
+  	if (govalidator.IsURL(file_list[0])) {
+	    fmt.Printf("Url = %s", file_list[0])
 	    id := encodestr(file_list[0])
 
 	    fmt.Printf("\nOpening boltdb = %s\\%s", os.Getenv("GOPATH"), dbLocation)
@@ -321,28 +309,44 @@ func main() {
     // Read all key:value pairs frm db
 	read()
   } else {
-  	fmt.Printf("\n\nOpening boltdb = %s\\%s \n", os.Getenv("GOPATH"), dbLocation)
+  	fmt.Printf("\nOpening boltdb = %s\\%s \n", os.Getenv("GOPATH"), dbLocation)
     for _, file := range file_list {
-      path, err := filepath.Abs(file)
-      if err != nil {
-        fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", file, err)
-        os.Exit(1)
-      }
-      if depth < 0 {
-        depth = 0
-      }
-      id := walkFilesystem(depth, path, "")	  
-	  insert(id.String(), path)
+      	if (govalidator.IsURL(file)) {
+	    	id := encodestr(file)
+      		insert(id.String(), file)
 
-	  // Generate c4id for above c4id
-	  fmt.Printf("\nGenerating C4Id for above C4Id,")
-	  id1 := encodestr(id.String())
-	  printID(id.String(), id1)
+			// Generate c4id for above c4id
+			fmt.Printf("\n\nGenerating C4Id for above C4Id,")
+			id1 := encodestr(id.String())
+			printID(id.String(), id1)
+	
+			insert(id1.String(), id.String())
+      	} else {
+      		path, err := filepath.Abs(file)
+      		if err != nil {
+        		fmt.Fprintf(os.Stderr, "Unable to find absolute path for %s. %s\n", file, err)
+        		os.Exit(1)
+      		}
+      		if depth < 0 {
+        		depth = 0
+      		}
+      		id := walkFilesystem(depth, path, "")	  
+	  		insert(id.String(), path)	
+
+	  		// Generate c4id for above c4id
+	  		fmt.Printf("\nGenerating C4Id for above C4Id,")
+	  		id1 := encodestr(id.String())
+	  		printID(id.String(), id1)
  	
-	  insert(id1.String(), id.String())
+	  		insert(id1.String(), id.String())
+	  	}
     }
     // Read all key:value pairs frm boltDb
 	read()
   }
   os.Exit(0)
+}
+
+func main() {
+	c4bolt_function()
 }
